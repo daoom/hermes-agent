@@ -27,15 +27,15 @@ def _enabled() -> bool:
 # Hook handlers
 # ---------------------------------------------------------------------------
 
-def _on_session_end(ctx) -> None:
-    """Enqueue the completed session's transcript for nightly consolidation."""
-    transcript = getattr(ctx, "transcript", None) or []
-    if not transcript:
-        return
-    try:
-        _schedule.enqueue_session(transcript)
-    except Exception:
-        pass
+def _on_session_end(**_: object) -> None:
+    """Session-end hook placeholder.
+
+    Hermes' session_end hook currently provides metadata (session_id,
+    completed, platform, etc.) rather than the transcript. The nightly Light
+    Sleep phase scans the profile SQLite session store directly, so this hook
+    intentionally does no work beyond staying compatible with the hook API.
+    """
+    return
 
 
 # ---------------------------------------------------------------------------

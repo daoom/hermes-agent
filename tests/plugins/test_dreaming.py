@@ -121,6 +121,12 @@ def test_meta_entries_are_skipped_not_promoted(tmp_path, monkeypatch):
     assert not (tmp_path / "memories" / "MEMORY.md").exists()
 
 
+def test_on_session_end_hook_accepts_metadata_kwargs():
+    from plugins import dreaming
+
+    dreaming._on_session_end(session_id="s1", completed=True, platform="telegram")
+
+
 def test_quiet_window_skips_nightly_run(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_DREAM_REM_MODE", "off")
     _stage_candidate(tmp_path, "Marc prefers nightly dreaming to respect active use of the gateway.")
