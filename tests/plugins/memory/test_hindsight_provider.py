@@ -1143,6 +1143,32 @@ class TestShutdownRace:
         assert provider._writer_thread is first_writer
         assert provider._client.aretain_batch.call_count == 2
 
+    def test_get_client_is_singleton_under_prefetch_retain_race(self, provider, monkeypatch):
+        """Concurrent prefetch and retain workers must not create two aiohttp clients."""
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        import hindsight_client
+
+        created = []
+
+        class FakeHindsight:
+            def __init__(self, **kwargs):
+                time.sleep(0.03)
+                created.append(self)
+
+        monkeypatch.setattr(hindsight_client, "Hindsight", FakeHindsight)
+        provider._client = None
+        provider._mode = "local_external"
+        provider._api_url = "http://localhost:8888"
+        provider._api_key = ""
+        provider._timeout = 120
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            clients = list(pool.map(lambda _: provider._get_client(), range(8)))
+
+        assert len(created) == 1
+        assert all(client is created[0] for client in clients)
+
     def test_sync_turn_after_shutdown_is_dropped(self, provider):
         """Once shutdown has fired, new sync_turn() calls are no-ops.
 
