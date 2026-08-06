@@ -8,9 +8,9 @@ Three-phase pipeline that runs automatically during idle periods:
 
 | Phase | What happens |
 |---|---|
-| **Light Sleep** | Scans recent session transcripts, deduplicates by content hash, scores candidates using weighted criteria |
-| **REM** | Uses Hermes' plugin LLM facade (`ctx.llm`) when available to extract themes and write a narrative diary entry to `DREAMS.md`; otherwise uses a deterministic bullet summary |
-| **Deep Sleep** | Promotes high-signal entries to `memories/MEMORY.md`; skips meta-entries (about memory management itself) so they remain review-only in `DREAMS.md` |
+| **Light Sleep** | Scans recent direct-user transcript records, filters scaffolding and unsafe source material, extracts schema-versioned structural facts, and aggregates bounded duplicates/paraphrases with provenance |
+| **REM** | Sends safe candidates as untrusted structured data to the configured Hermes auxiliary LLM, validates the JSON response, and otherwise writes a deterministic fallback to `DREAMS.md` |
+| **Deep Sleep** | Re-derives promotion-critical fields from exact source text, requires a complete assertion plus a current semantic assessment, applies calibrated scoring, and atomically promotes at most one direct stable preference per cycle to `memories/MEMORY.md` |
 
 ## Opt-in
 
@@ -26,27 +26,36 @@ export HERMES_DREAMING=1
 |---|---|---|
 | `HERMES_DREAMING` | _(unset)_ | Set to `1` to enable |
 | `HERMES_DREAM_REM_MODE` | `auto` | `auto` uses `ctx.llm` when available; `off` always uses deterministic fallback |
+| `HERMES_DREAM_PROMOTION_MODE` | value of `HERMES_DREAM_REM_MODE` | Only `auto` enables semantic promotion; `off`, empty, unknown, or malformed values fail closed and make every candidate review-only |
 | `HERMES_DREAM_PROVIDER` | _(unset)_ | Optional Hermes provider override for REM; gated by `plugins.entries.dreaming.llm.allow_provider_override` |
 | `HERMES_DREAM_MODEL` | _(unset)_ | Optional Hermes model override for REM; gated by `plugins.entries.dreaming.llm.allow_model_override` |
 | `HERMES_DREAM_LLM_TIMEOUT` | _(unset)_ | Optional timeout in seconds for REM LLM calls |
 | `HERMES_DREAM_MIN_HOURS` | `24` | Minimum hours between cycles |
 | `HERMES_DREAM_MIN_SESSIONS` | `5` | Minimum sessions queued before cycle runs |
+| `HERMES_DREAM_MIN_SCORE` | `0.72` | Minimum calibrated score after policy gates |
+| `HERMES_DREAM_MAX_PROMOTIONS` | `1` | Requested automatic promotions per profile and cycle; the Gate A pilot enforces a hard upper bound of one |
+| `HERMES_DREAM_MEMORY_CHAR_LIMIT` | `12000` | Fail-closed capacity limit for the target memory file |
 | `HERMES_DREAM_POLL_SECONDS` | `300` | Background thread poll interval (seconds) |
 
 ## Scoring
 
-Candidates are scored before promotion using these weights (from the issue spec):
+Candidates that pass deterministic source and policy gates are scored using these calibrated weights:
 
 | Dimension | Weight |
 |---|---|
-| Relevance | 30% |
-| Frequency | 24% |
-| Query diversity | 15% |
-| Recency | 15% |
-| Consolidation (novelty vs existing) | 10% |
-| Conceptual richness | 6% |
+| Relevance | 28% |
+| Direct-source quality | 24% |
+| Durability | 18% |
+| Independent-session support | 12% |
+| Recency | 8% |
+| Novelty vs existing memory | 7% |
+| Conceptual richness | 3% |
 
-Promotion threshold: **0.55**. Candidates below threshold appear in the dream diary but are not written to `MEMORY.md`.
+Promotion threshold: **0.72**. Positive and negative fixtures keep a margin on both sides of that boundary. Repetition inside one session does not increase independent-session support. Candidates below threshold remain review-only, and the pilot permits at most one automatic promotion per profile per cycle.
+
+## Policy gates
+
+Injected summaries, markdown scaffolding, tool/scheduler material, code blocks, volatile task state, assistant speculation, prompt-injection phrases, and recognizable secret material are rejected before scoring. Promotion re-derives canonical text, relation-derived category, assertion structure, source quality, relevance, and durability rather than trusting cached staging fields. Every claimed session/message source must resolve to an active direct-user row in `state.db` whose session ID and exact sentence match; unverifiable or mixed forged provenance remains review-only. Legacy/unversioned records, incomplete assertions, non-preference categories, and candidates without a valid current semantic assessment also remain review-only. The semantic response is an exact candidate-ID disposition: only a complete direct assertion with stable scope is eligible. Existing-memory similarity is calculated before ranking so duplicate facts are review-only rather than rewarded as novel.
 
 ## Meta-entry filter
 
@@ -75,7 +84,7 @@ Entries about memory management itself (e.g. "memory is full", "update SKILL.md"
 
 ## Without an LLM
 
-The plugin does not require Ollama, a local server, or any local model. If `ctx.llm` is unavailable, `HERMES_DREAM_REM_MODE=off`, or the LLM call fails, the REM phase writes a deterministic bullet-point summary. All other phases (Light Sleep, Deep Sleep, diary write) work without model access.
+The plugin does not require Ollama, a local server, or any local model. If `ctx.llm` is unavailable, Hermes can use the configured auxiliary provider. If semantic validation is disabled or unavailable, Light Sleep, deterministic REM fallback, scoring, review decisions, and diary writes still work, but Deep Sleep fails closed and performs no automatic memory promotion.
 
 ## Relationship to Willow 2.0
 

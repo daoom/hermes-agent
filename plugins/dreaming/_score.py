@@ -1,15 +1,8 @@
-"""
-Candidate scoring for the Deep Sleep promotion gate.
+"""Candidate scoring for the Deep Sleep promotion gate.
 
-Weights match the issue spec:
-  relevance          30%
-  frequency          24%
-  query_diversity    15%
-  recency            15%
-  consolidation      10%
-  conceptual_richness 6%
-
-All inputs are normalised to [0.0, 1.0] before weighting.
+The score ranks candidates only after deterministic source and policy gates pass.
+Every component is normalized to [0.0, 1.0]. Session support measures actual
+independent observations; generated query counts are not treated as evidence.
 """
 from __future__ import annotations
 
@@ -18,17 +11,15 @@ import time
 from typing import Any
 
 _WEIGHTS = {
-    "relevance": 0.30,
-    "frequency": 0.24,
-    "query_diversity": 0.15,
-    "recency": 0.15,
-    "consolidation": 0.10,
-    "conceptual_richness": 0.06,
+    "relevance": 0.28,
+    "source_quality": 0.24,
+    "durability": 0.18,
+    "session_support": 0.12,
+    "recency": 0.08,
+    "novelty": 0.07,
+    "conceptual_richness": 0.03,
 }
 
-# Keywords that indicate a meta-memory-management entry.
-# These are routed to a skill file rather than promoted to MEMORY.md.
-# Suggested by @vingeraycn in issue #25309.
 _META_KEYWORDS = frozenset([
     "memory is full", "memory capacity", "memory management",
     "memory.md", "skill.md", "store in skill", "update skill",
@@ -42,47 +33,47 @@ def is_meta_entry(text: str) -> bool:
     return any(kw in lower for kw in _META_KEYWORDS)
 
 
+def _unit(value: Any, default: float) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
 def score(candidate: dict[str, Any], now: float | None = None) -> float:
-    """
-    Score a staging candidate dict. Returns a float in [0.0, 1.0].
-
-    Expected candidate fields (all optional, defaulted gracefully):
-      text             str   — the memory text
-      relevance        float — semantic relevance score from retrieval [0,1]
-      frequency        int   — times this fact appeared across sessions
-      query_count      int   — distinct queries that surfaced this fact
-      created_at       float — unix timestamp of first observation
-      consolidation    float — similarity to existing MEMORY.md entries [0,1]
-                               (lower = more novel = higher score)
-      word_count       int   — approximate word count of the text
-    """
+    """Return a calibrated rank for a policy-eligible structured candidate."""
     now = now or time.time()
+    relevance = _unit(candidate.get("relevance"), 0.5)
+    source_default = 1.0 if candidate.get("role") == "user" else 0.0
+    source_quality = _unit(candidate.get("source_quality"), source_default)
+    durability = _unit(candidate.get("durability"), 0.8)
 
-    relevance = float(candidate.get("relevance", 0.5))
+    sessions = int(candidate.get("session_count", 0) or 0)
+    if sessions <= 0:
+        sessions = len(set(candidate.get("session_ids", [])))
+    independent_observations = max(1, sessions)
+    session_support = min(
+        1.0,
+        0.4 + 0.6 * math.log1p(independent_observations - 1) / math.log1p(4),
+    )
 
-    raw_freq = int(candidate.get("frequency", 1))
-    frequency = min(1.0, math.log1p(raw_freq) / math.log1p(20))
+    age_seconds = max(0.0, now - float(candidate.get("created_at", now)))
+    recency = math.exp(-(age_seconds / 86400) / 14)
 
-    raw_qd = int(candidate.get("query_count", 1))
-    query_diversity = min(1.0, math.log1p(raw_qd) / math.log1p(10))
+    existing_similarity = _unit(candidate.get("consolidation"), 0.0)
+    novelty = 1.0 - existing_similarity
 
-    age_seconds = now - float(candidate.get("created_at", now))
-    age_days = age_seconds / 86400
-    recency = math.exp(-age_days / 14)  # half-life ~14 days
-
-    # consolidation: 0 = already in MEMORY.md (penalise), 1 = fully novel (reward)
-    existing_sim = float(candidate.get("consolidation", 0.0))
-    consolidation = 1.0 - existing_sim
-
-    raw_wc = int(candidate.get("word_count", len(candidate.get("text", "").split())))
-    conceptual_richness = min(1.0, math.log1p(raw_wc) / math.log1p(80))
+    text = str(candidate.get("canonical_text") or candidate.get("text") or "")
+    raw_wc = int(candidate.get("word_count", len(text.split())) or 0)
+    conceptual_richness = min(1.0, math.log1p(max(0, raw_wc)) / math.log1p(80))
 
     components = {
         "relevance": relevance,
-        "frequency": frequency,
-        "query_diversity": query_diversity,
+        "source_quality": source_quality,
+        "durability": durability,
+        "session_support": session_support,
         "recency": recency,
-        "consolidation": consolidation,
+        "novelty": novelty,
         "conceptual_richness": conceptual_richness,
     }
-    return sum(_WEIGHTS[k] * v for k, v in components.items())
+    return sum(_WEIGHTS[name] * value for name, value in components.items())
