@@ -501,10 +501,17 @@ def _parse_direct_fact_assertion(sentence: str) -> dict[str, str] | None:
 
 
 def _candidate_from_sentence(sentence: str, *, role: str, now: float, session_id: str | None = None, message_id: int | None = None) -> dict | None:
+    """Stage a source-safe observation for review.
+
+    Observation is deliberately wider than promotion. A sentence outside the narrow
+    direct-assertion grammar is still staged so scoring, REM, and the diary can see
+    it; it simply carries no ``assertion`` envelope, which keeps it review-only at
+    the write boundary (see ``_promotion_policy_reason``).
+    """
     sentence = " ".join(sentence.strip().split())
-    assertion = _parse_direct_fact_assertion(sentence)
-    if assertion is None or not _looks_like_memory_candidate(sentence):
+    if not _looks_like_memory_candidate(sentence):
         return None
+    assertion = _parse_direct_fact_assertion(sentence)
     category = _candidate_category(sentence)
     key = _canonical_key(sentence, category=category)
     candidate = {
@@ -514,7 +521,6 @@ def _candidate_from_sentence(sentence: str, *, role: str, now: float, session_id
         "canonical_key": key,
         "hash": key,
         "category": category,
-        "assertion": assertion,
         "role": role,
         "created_at": now,
         "frequency": 1,
@@ -525,6 +531,8 @@ def _candidate_from_sentence(sentence: str, *, role: str, now: float, session_id
         "source_quality": 1.0 if role == "user" else 0.0,
         "durability": 0.9 if category == "preference" else 0.55,
     }
+    if assertion is not None:
+        candidate["assertion"] = assertion
     if session_id:
         candidate["session_id"] = session_id
         candidate["session_ids"] = [session_id]

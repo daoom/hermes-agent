@@ -602,7 +602,8 @@ def test_light_sleep_rejects_scheduler_prompt_scaffolding(tmp_path):
     ]
 
 
-def test_light_sleep_requires_direct_asserted_facts(tmp_path):
+def test_light_sleep_marks_only_direct_asserted_facts_as_promotable(tmp_path):
+    """Indirect framings may be observed for review, but carry no assertion envelope."""
     db = tmp_path / "state.db"
     rows = [
         (1, "s1", "For example, say 'Marc prefers verbose replies' in the test."),
@@ -624,12 +625,93 @@ def test_light_sleep_requires_direct_asserted_facts(tmp_path):
     _schedule.light_sleep_scan(hermes_home=str(tmp_path))
     staged = _schedule._load_staged_candidates(_schedule._staging_path(str(tmp_path)))
 
-    assert [candidate["canonical_text"] for candidate in staged] == [
+    staged_by_text = {candidate["canonical_text"]: candidate for candidate in staged}
+    direct = [
         "Marc prefers concise technical replies without unnecessary filler.",
         "I prefer profile-local services that survive restarts.",
     ]
-    assert all(candidate["assertion"]["subject"] for candidate in staged)
-    assert all(candidate["assertion"]["relation"] for candidate in staged)
+    indirect = [content for _, _, content in rows if content not in direct]
+
+    assert set(staged_by_text) == set(direct) | set(indirect)
+    assert all(staged_by_text[text]["assertion"]["subject"] for text in direct)
+    assert all(staged_by_text[text]["assertion"]["relation"] for text in direct)
+    assert all("assertion" not in staged_by_text[text] for text in indirect)
+    assert all(
+        _schedule._promotion_policy_reason(
+            {**staged_by_text[text], "provenance_verified": True},
+            assessment={"assertion_mode": "direct", "durability_scope": "stable"},
+        )
+        is not None
+        for text in indirect
+    )
+
+
+def test_light_sleep_stages_natural_language_observation_without_parsed_assertion(
+    tmp_path,
+    monkeypatch,
+):
+    """Observation is not promotion: source-safe user evidence must reach review."""
+    monkeypatch.setenv("HERMES_DREAM_REM_MODE", "off")
+    observation = (
+        "When things get overwhelming I usually want short grounding steps "
+        "instead of long explanations."
+    )
+    assert _schedule._parse_direct_fact_assertion(observation) is None
+    assert _schedule._looks_like_memory_candidate(observation) is True
+    assert _schedule._source_content_allowed(observation, role="user") is True
+    _write_source_message(tmp_path, observation, message_id=1, session_id="s1")
+
+    scan = _schedule.light_sleep_scan(hermes_home=str(tmp_path))
+    staged = _schedule._load_staged_candidates(_schedule._staging_path(str(tmp_path)))
+
+    assert scan["candidates_staged"] == 1
+    assert [candidate["canonical_text"] for candidate in staged] == [observation]
+    assert "assertion" not in staged[0]
+
+    result = _schedule.dream_run(
+        hermes_home=str(tmp_path), force=True, scan_recent=False
+    )
+
+    assert result["status"] == "complete"
+    assert result["candidates_scanned"] == 1
+    assert [decision["canonical_text"] for decision in result["decisions"]] == [observation]
+
+
+def test_candidate_without_parsed_assertion_stays_review_only_despite_favorable_signals(
+    tmp_path,
+    monkeypatch,
+):
+    """The write boundary still requires a parsed assertion, not just a good score."""
+    monkeypatch.setenv("HERMES_DREAM_REM_MODE", "off")
+    observation = (
+        "When things get overwhelming I usually want short grounding steps "
+        "instead of long explanations."
+    )
+    _write_source_message(tmp_path, observation, message_id=1, session_id="s1")
+    _schedule.light_sleep_scan(hermes_home=str(tmp_path))
+
+    monkeypatch.setattr(_score, "score", lambda candidate, now: 1.0)
+    monkeypatch.setattr(
+        _schedule,
+        "_promotion_assessments",
+        lambda candidates, llm=None: {
+            candidate["canonical_key"]: {
+                "assertion_mode": "direct",
+                "durability_scope": "stable",
+            }
+            for candidate in candidates
+        },
+    )
+
+    result = _schedule.dream_run(
+        hermes_home=str(tmp_path), force=True, scan_recent=False
+    )
+
+    assert result["promoted"] == 0
+    assert result["would_promote"] == 0
+    assert result["decisions"][0]["decision"] == "review_only"
+    assert result["decisions"][0]["reason"] == "invalid_assertion"
+    assert not (tmp_path / "memories" / "MEMORY.md").exists()
 
 
 def test_default_threshold_separates_calibration_fixtures():

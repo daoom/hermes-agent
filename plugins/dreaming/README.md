@@ -8,7 +8,7 @@ Three-phase pipeline that runs automatically during idle periods:
 
 | Phase | What happens |
 |---|---|
-| **Light Sleep** | Scans recent direct-user transcript records, filters scaffolding and unsafe source material, extracts schema-versioned structural facts, and aggregates bounded duplicates/paraphrases with provenance |
+| **Light Sleep** | Scans recent direct-user transcript records, filters scaffolding and unsafe source material, stages schema-versioned observations for review (an observation outside the direct-assertion grammar is staged without an assertion envelope and stays review-only), and aggregates bounded duplicates/paraphrases with provenance |
 | **REM** | Sends safe candidates as untrusted structured data to the configured Hermes auxiliary LLM, validates the JSON response, and otherwise writes a deterministic fallback to `DREAMS.md` |
 | **Deep Sleep** | Re-derives promotion-critical fields from exact source text, requires a complete assertion plus a current semantic assessment, applies calibrated scoring, and atomically promotes at most one direct stable preference per cycle to `memories/MEMORY.md` |
 
