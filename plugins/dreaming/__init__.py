@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import time
 
-from . import _diary, _schedule
+from . import _diary, _preference_semantics, _schedule
 
 
 def _enabled() -> bool:
@@ -44,19 +44,32 @@ def _on_session_end(**_: object) -> None:
 
 _HELP = """\
 /dream            — show status and last diary entry
-/dream run        — force a consolidation cycle now and allow memory writes
+/dream run        — force a consolidation cycle now
 /dream preview    — run Light+REM+Deep scoring without writing MEMORY.md
-/dream status     — check conditions, quiet window, and last run stats
+/dream status     — check conditions, quiet window, routes, and last run stats
 /dream diary      — show the last dream diary entry
+
+Memory writes are gated by HERMES_DREAM_PROMOTION_MODE (off | shadow | auto),
+which defaults to off. In shadow the full two-model pipeline runs and reports
+would-promote counts without touching MEMORY.md; only auto ever writes.
 """
+
+
+def _route_display(kind: str) -> str:
+    provider = os.environ.get(f"HERMES_DREAM_{kind}_PROVIDER", "").strip() or "(unset)"
+    model = os.environ.get(f"HERMES_DREAM_{kind}_MODEL", "").strip() or "(unset)"
+    return f"{provider} / {model}"
 
 
 def _format_result(result: dict) -> str:
     status = result.get("status", "complete")
+    mode = result.get("promotion_mode", "off")
     promoted = result.get("promoted", 0)
     would = result.get("would_promote", promoted)
     if status == "preview":
         promoted_text = f"would promote {would}"
+    elif mode == "shadow":
+        promoted_text = f"would promote {would} (shadow — no memory writes)"
     else:
         promoted_text = f"promoted {promoted}"
     return (
@@ -109,7 +122,10 @@ def _handle_slash(raw_args: str, ctx=None) -> str:
         return (
             f"Enabled: {'yes' if _enabled() else 'no'}\n"
             f"Schedule: {os.environ.get('HERMES_DREAM_SCHEDULE', '0 3 * * *')}\n"
+            f"Promotion mode: {_preference_semantics.promotion_mode()}\n"
             f"REM provider/model: {os.environ.get('HERMES_DREAM_PROVIDER', 'mistral')} / {os.environ.get('HERMES_DREAM_MODEL', 'mistral-small-latest')}\n"
+            f"Extract provider/model: {_route_display('EXTRACT')}\n"
+            f"Verify provider/model: {_route_display('VERIFY')}\n"
             f"Hours since last dream: {hours_ago:.1f}\n"
             f"Sessions since last dream: {sessions}\n"
             f"Quiet window satisfied: {'yes' if quiet else 'no'}\n"
