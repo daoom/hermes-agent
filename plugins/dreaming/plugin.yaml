@@ -1,0 +1,12 @@
+name: dreaming
+version: 0.1.0
+description: >
+  Automatic nightly memory consolidation inspired by biological sleep cycles.
+  Scans recent profile sessions during the cron-driven nightly 3-phase pipeline:
+  Light Sleep (scan/dedupe/stage), REM Sleep (theme extraction + dream diary),
+  and Deep Sleep (promote to MEMORY.md).
+pip_dependencies: []
+requires_env: []
+hooks:
+  - on_session_end
+opt_in: true
